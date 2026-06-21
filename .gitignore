@@ -1,0 +1,28 @@
+# Build outputs
+bin/
+obj/
+
+# Local user/config files
+*.user
+config.json
+*.log
+
+# Temporary and generated test files
+*.tmp
+*.bak
+*.exe
+inspect*.cs
+test*.cs
+downloader.cs
+DownloadTest/
+test_adversarial/
+
+# Bundled external tooling used during local investigation
+uabea/
+uabea.zip
+
+# OS/editor files
+.vs/
+.vscode/
+Thumbs.db
+Desktop.ini
