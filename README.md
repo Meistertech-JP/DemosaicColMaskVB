@@ -6,7 +6,7 @@ An independent VB.NET / WinForms port inspired by [trimmerpop/Demosaic_colMask](
 
 This is not a GitHub fork in the strict repository sense. The original project is Python/UnityPy-based; this version is a separate VB.NET implementation with a different save strategy focused on preserving Unity asset structure.
 
-![Main window](docs/images/main-window.png)
+![Main window](docs/images/main-window-en.png)
 
 ## Highlights
 

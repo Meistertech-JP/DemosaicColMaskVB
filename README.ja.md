@@ -6,7 +6,7 @@
 
 厳密な意味での GitHub fork ではありません。元プロジェクトは Python/UnityPy 製ですが、この版は VB.NET で作り直した別実装で、Unity asset の元構造を壊しにくい保存方式を重視しています。
 
-![メイン画面](docs/images/main-window.png)
+![メイン画面](docs/images/main-window-ja.png)
 
 ## 主な特徴
 
