@@ -80,6 +80,12 @@ Public Class Localization
             {"CopyInfo", "Copy Info"},
             {"SelectSourceShader", "Select Source Shader"},
             {"TargetShaderInfo", "Target Shader (to be replaced)"},
+            {"Keywords", "Keywords"},
+            {"KeywordSettings", "Mosaic Keywords"},
+            {"KeywordList", "Auto-select shader name keywords"},
+            {"AddKeyword", "Add"},
+            {"DeleteKeyword", "Delete"},
+            {"RestoreDefaults", "Default"},
             {"OK", "OK"},
             {"Cancel", "Cancel"}
         }
@@ -117,6 +123,12 @@ Public Class Localization
             {"CopyInfo", "情報をコピー"},
             {"SelectSourceShader", "ソースシェーダーを選択"},
             {"TargetShaderInfo", "ターゲットシェーダー（置換対象）"},
+            {"Keywords", "キーワード"},
+            {"KeywordSettings", "モザイク判定キーワード"},
+            {"KeywordList", "自動選択に使うシェーダー名キーワード"},
+            {"AddKeyword", "追加"},
+            {"DeleteKeyword", "削除"},
+            {"RestoreDefaults", "既定"},
             {"OK", "OK"},
             {"Cancel", "キャンセル"}
         }

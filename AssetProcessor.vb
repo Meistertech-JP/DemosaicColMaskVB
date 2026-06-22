@@ -9,8 +9,7 @@ Public Class AssetProcessor
     Public Event LogMessage(message As String)
     Public Event ProgressUpdate(value As Integer, max As Integer)
 
-    Private ReadOnly ASSET_EXTENSIONS As String() = {".assets", ".bundle", ".unity3d", ".dat"}
-    Private ReadOnly KEYWORDS As String() = {"mos", "moz", "masi", "maz", "censor", "ピクセル", "モザイク"}
+    Private ReadOnly ASSET_EXTENSIONS As String() = {".assets", ".bundle", ".unity3d", ".sharedassets", ".ress", ".dat"}
 
     Public Class ShaderInfo
         Public Property Name As String
@@ -32,26 +31,42 @@ Public Class AssetProcessor
         RaiseEvent LogMessage(msg)
     End Sub
 
+    Private Function IsKnownAssetFile(filePath As String) As Boolean
+        Return ASSET_EXTENSIONS.Contains(Path.GetExtension(filePath).ToLowerInvariant())
+    End Function
+
+    Private Function IsBackupFile(filePath As String) As Boolean
+        Return filePath.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function IsApkFile(filePath As String) As Boolean
+        Return String.Equals(Path.GetExtension(filePath), ".apk", StringComparison.OrdinalIgnoreCase)
+    End Function
+
+    Private Function IsScanAllCandidate(filePath As String) As Boolean
+        If IsBackupFile(filePath) Then Return False
+        If IsApkFile(filePath) Then Return False
+        Return True
+    End Function
+
     Public Function ScanShaders(targetPath As String, scanAll As Boolean, ByRef outApkMap As Dictionary(Of String, String)) As List(Of ShaderInfo)
         Dim foundShaders As New List(Of ShaderInfo)()
         Dim assetFiles As New List(Of String)()
         Dim apkFiles As New List(Of String)()
 
         If Directory.Exists(targetPath) Then
-            Dim allFiles = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+            Dim allFiles = Directory.GetFiles(targetPath, "*", SearchOption.AllDirectories)
             For Each f In allFiles
-                Dim ext = Path.GetExtension(f).ToLower()
-                If ASSET_EXTENSIONS.Contains(ext) Then
+                If IsKnownAssetFile(f) Then
                     assetFiles.Add(f)
-                ElseIf ext = ".apk" Then
+                ElseIf IsApkFile(f) Then
                     apkFiles.Add(f)
                 End If
             Next
         ElseIf File.Exists(targetPath) Then
-            Dim ext = Path.GetExtension(targetPath).ToLower()
-            If ASSET_EXTENSIONS.Contains(ext) Then
+            If IsKnownAssetFile(targetPath) Then
                 assetFiles.Add(targetPath)
-            ElseIf ext = ".apk" Then
+            ElseIf IsApkFile(targetPath) Then
                 apkFiles.Add(targetPath)
             End If
         End If
@@ -83,9 +98,9 @@ Public Class AssetProcessor
                 Return foundShaders
             End Try
 
-            Dim extractedFiles = Directory.GetFiles(tempSubDir, "*.*", SearchOption.AllDirectories)
+            Dim extractedFiles = Directory.GetFiles(tempSubDir, "*", SearchOption.AllDirectories)
             For Each f In extractedFiles
-                If ASSET_EXTENSIONS.Contains(Path.GetExtension(f).ToLower()) Then
+                If IsKnownAssetFile(f) Then
                     scanTargets.Add(f)
                 End If
             Next
@@ -93,10 +108,12 @@ Public Class AssetProcessor
             Log(Loc.GetString("LogNormalMode"))
             If scanAll Then
                 If Directory.Exists(targetPath) Then
-                    scanTargets.AddRange(Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories).Where(
-                        Function(f) Not f.EndsWith(".bak") AndAlso ASSET_EXTENSIONS.Contains(Path.GetExtension(f).ToLower())))
+                    scanTargets.AddRange(Directory.GetFiles(targetPath, "*", SearchOption.AllDirectories).Where(
+                        Function(f) IsScanAllCandidate(f)))
                 Else
-                    scanTargets.AddRange(assetFiles)
+                    If File.Exists(targetPath) AndAlso IsScanAllCandidate(targetPath) Then
+                        scanTargets.Add(targetPath)
+                    End If
                 End If
             Else
                 scanTargets.AddRange(assetFiles)

@@ -64,6 +64,7 @@ bin\Debug\net8.0-windows\DemosaicColMaskVB.exe
 - Raw patch is used for loose `.assets` files when possible.
 - Bundle and APK paths are more fragile because repacking can change compression, signing, or container layout.
 - Shader replacement is riskier than `colMask` editing because replacement can require size or structure changes.
+- 2D games or image-baked mosaics may not change visually. This tool only edits Shader `colMask` values; it cannot remove censorship already baked into textures, sprites, or image assets.
 - This tool is for local research and compatibility testing. Use it responsibly and respect applicable laws and content rules.
 
 ## Credits

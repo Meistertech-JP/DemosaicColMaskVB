@@ -12,6 +12,7 @@ Public Class Form1
     Private WithEvents btnScanAll As Button
     Private WithEvents chkBackup As CheckBox
     Private WithEvents btnStart As Button
+    Private WithEvents btnKeywords As Button
     Private WithEvents txtFilter As TextBox
     Private WithEvents lvAvailable As ListView
     Private WithEvents lvSelected As ListView
@@ -20,10 +21,12 @@ Public Class Form1
     Private ctxSelected As ContextMenuStrip
     Private splitMain As SplitContainer
     Private splitCenter As SplitContainer
+    Private scanDebounceTimer As Timer
 
     Private Loc As New Localization()
     Private WithEvents cmbLang As ComboBox
-    Private replacementMap As New Dictionary(Of String, AssetProcessor.ShaderInfo)()
+    Private replacementMap As New Dictionary(Of String, AssetProcessor.ShaderInfo)(StringComparer.OrdinalIgnoreCase)
+    Private mosaicKeywords As List(Of String) = KeywordSettings.Load()
 
     Public Sub New()
         InitializeComponent()
@@ -35,7 +38,7 @@ Public Class Form1
     End Sub
 
     Private Sub SetupUI()
-        Me.Size = New Drawing.Size(800, 600)
+        Me.Size = New Drawing.Size(920, 600)
 
         ' Top Panel
         Dim pnlTop As New Panel() With {.Dock = DockStyle.Top, .Height = 40}
@@ -47,6 +50,9 @@ Public Class Form1
         txtPath = New TextBox() With {.Left = 50, .Top = 10, .Width = 260, .AllowDrop = True}
         pnlTop.Controls.Add(txtPath)
 
+        scanDebounceTimer = New Timer() With {.Interval = 700}
+        AddHandler scanDebounceTimer.Tick, AddressOf scanDebounceTimer_Tick
+
         btnScanAll = New Button() With {.Left = 320, .Top = 8, .Width = 80}
         pnlTop.Controls.Add(btnScanAll)
 
@@ -56,7 +62,10 @@ Public Class Form1
         btnStart = New Button() With {.Left = 510, .Top = 8, .Width = 110}
         pnlTop.Controls.Add(btnStart)
 
-        cmbLang = New ComboBox() With {.Left = 630, .Top = 9, .Width = 120, .DropDownStyle = ComboBoxStyle.DropDownList}
+        btnKeywords = New Button() With {.Left = 630, .Top = 8, .Width = 85}
+        pnlTop.Controls.Add(btnKeywords)
+
+        cmbLang = New ComboBox() With {.Left = 725, .Top = 9, .Width = 120, .DropDownStyle = ComboBoxStyle.DropDownList}
         cmbLang.Items.Add(New With {.Text = "English", .Value = "en"})
         cmbLang.Items.Add(New With {.Text = "日本語", .Value = "ja"})
         cmbLang.Items.Add(New With {.Text = "繁體中文", .Value = "zh-Hant"})
@@ -103,6 +112,7 @@ Public Class Form1
         lvAvailable.Columns.Add("Name", 150)
         lvAvailable.Columns.Add("PathID", 80)
         lvAvailable.Columns.Add("File", 200)
+        ListViewColumnSorter.Attach(lvAvailable)
         grpAvailable.Controls.Add(lvAvailable)
 
         ' Selected List
@@ -114,6 +124,7 @@ Public Class Form1
         lvSelected.Columns.Add("Status", 100)
         lvSelected.Columns.Add("PathID", 80)
         lvSelected.Columns.Add("File", 200)
+        ListViewColumnSorter.Attach(lvSelected)
         grpSelected.Controls.Add(lvSelected)
 
         ' Context Menu for Selected List
@@ -161,6 +172,7 @@ Public Class Form1
         btnScanAll.Text = Loc.GetString("ScanAll")
         chkBackup.Text = Loc.GetString("BackupFile")
         btnStart.Text = Loc.GetString("StartDemosaic")
+        btnKeywords.Text = Loc.GetString("Keywords")
 
         ' Find split panels
         Dim splitMain = Me.Controls.OfType(Of SplitContainer)().FirstOrDefault()
@@ -245,12 +257,21 @@ Public Class Form1
     Private lastScannedPath As String = ""
 
     Private Sub txtPath_TextChanged(sender As Object, e As EventArgs) Handles txtPath.TextChanged
-        Dim path = txtPath.Text
-        If Not String.IsNullOrWhiteSpace(path) AndAlso (Directory.Exists(path) OrElse File.Exists(path)) Then
-            If path <> lastScannedPath Then
-                lastScannedPath = path
-                PerformScan(False)
-            End If
+        If scanDebounceTimer Is Nothing Then Return
+
+        scanDebounceTimer.Stop()
+        Dim path = txtPath.Text.Trim()
+        If String.IsNullOrWhiteSpace(path) OrElse path = lastScannedPath Then Return
+        scanDebounceTimer.Start()
+    End Sub
+
+    Private Sub scanDebounceTimer_Tick(sender As Object, e As EventArgs)
+        scanDebounceTimer.Stop()
+
+        Dim path = txtPath.Text.Trim()
+        If Not String.IsNullOrWhiteSpace(path) AndAlso path <> lastScannedPath AndAlso (Directory.Exists(path) OrElse File.Exists(path)) Then
+            lastScannedPath = path
+            PerformScan(False)
         End If
     End Sub
 
@@ -288,6 +309,7 @@ Public Class Form1
     End Sub
 
     Private Sub btnScanAll_Click(sender As Object, e As EventArgs) Handles btnScanAll.Click
+        If scanDebounceTimer IsNot Nothing Then scanDebounceTimer.Stop()
         PerformScan(True)
     End Sub
 
@@ -344,19 +366,34 @@ Public Class Form1
     Private Sub ToggleButtons(enabled As Boolean)
         btnScanAll.Enabled = enabled
         btnStart.Enabled = enabled
+        btnKeywords.Enabled = enabled
     End Sub
+
+    Private Function GetShaderKey(shader As AssetProcessor.ShaderInfo) As String
+        If shader Is Nothing Then Return ""
+
+        Dim normalizedPath = shader.FilePath
+        If Not String.IsNullOrWhiteSpace(normalizedPath) Then
+            Try
+                normalizedPath = Path.GetFullPath(normalizedPath)
+            Catch
+            End Try
+        End If
+
+        Return shader.PathId.ToString() & "|" & normalizedPath
+    End Function
 
     Private Sub UpdateAvailableList()
         lvAvailable.Items.Clear()
         Dim filter = txtFilter.Text.ToLower()
 
-        Dim selectedKeys As New HashSet(Of String)()
+        Dim selectedKeys As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
         For Each item As ListViewItem In lvSelected.Items
-            selectedKeys.Add(item.SubItems(2).Text & "|" & item.SubItems(3).Text)
+            selectedKeys.Add(GetShaderKey(TryCast(item.Tag, AssetProcessor.ShaderInfo)))
         Next
 
         For Each shader In allShaders
-            Dim key = shader.PathId.ToString() & "|" & shader.FilePath
+            Dim key = GetShaderKey(shader)
             If selectedKeys.Contains(key) Then Continue For
 
             If String.IsNullOrEmpty(filter) OrElse shader.Name.ToLower().Contains(filter) OrElse shader.FilePath.ToLower().Contains(filter) Then
@@ -382,13 +419,12 @@ Public Class Form1
     End Sub
 
     Private Sub AutoSelectMosaicShaders()
-        Dim keywords As String() = {"mos", "moz", "masi", "maz", "censor", "ピクセル", "モザイク"}
         Dim toMove As New List(Of ListViewItem)()
 
         For Each item As ListViewItem In lvAvailable.Items
-            Dim name = item.Text.ToLower()
-            For Each k In keywords
-                If name.Contains(k) Then
+            Dim name = item.Text.ToLowerInvariant()
+            For Each keyword In mosaicKeywords
+                If Not String.IsNullOrWhiteSpace(keyword) AndAlso name.Contains(keyword.ToLowerInvariant()) Then
                     toMove.Add(item)
                     Exit For
                 End If
@@ -424,7 +460,7 @@ Public Class Form1
         If lvSelected.SelectedItems.Count > 0 Then
             For Each item As ListViewItem In lvSelected.SelectedItems
                 lvSelected.Items.Remove(item)
-                Dim key = item.SubItems(2).Text & "|" & item.SubItems(3).Text
+                Dim key = GetShaderKey(TryCast(item.Tag, AssetProcessor.ShaderInfo))
                 If replacementMap.ContainsKey(key) Then
                     replacementMap.Remove(key)
                 End If
@@ -438,15 +474,13 @@ Public Class Form1
         Dim selectedItem = lvSelected.SelectedItems(0)
         Dim originalShader = CType(selectedItem.Tag, AssetProcessor.ShaderInfo)
 
-        ' Get available shaders to choose from (ones not currently in selected list)
+        ' Use every shader except the current target as a possible replacement source.
+        ' Auto-selected mosaic shaders may still be the best source suggestion.
         Dim availableShaders As New List(Of AssetProcessor.ShaderInfo)()
-        Dim selectedKeys As New HashSet(Of String)()
-        For Each item As ListViewItem In lvSelected.Items
-            selectedKeys.Add(item.SubItems(2).Text & "|" & item.SubItems(3).Text)
-        Next
+        Dim originalKey = GetShaderKey(originalShader)
         For Each shader In allShaders
-            Dim key = shader.PathId.ToString() & "|" & shader.FilePath
-            If Not selectedKeys.Contains(key) Then
+            Dim key = GetShaderKey(shader)
+            If Not String.Equals(key, originalKey, StringComparison.OrdinalIgnoreCase) Then
                 availableShaders.Add(shader)
             End If
         Next
@@ -454,7 +488,7 @@ Public Class Form1
         Using frm As New ReplaceForm(availableShaders, originalShader, Loc)
             If frm.ShowDialog(Me) = DialogResult.OK Then
                 Dim targetShader = frm.SelectedShader
-                Dim key = originalShader.PathId.ToString() & "|" & originalShader.FilePath
+                Dim key = GetShaderKey(originalShader)
                 replacementMap(key) = targetShader
                 selectedItem.SubItems(1).Text = "-> " & targetShader.Name
                 UpdateAvailableList()
@@ -516,7 +550,7 @@ Public Class Form1
                                For Each item In selectedItems
                                    Dim shader = CType(item.Tag, AssetProcessor.ShaderInfo)
                                    Dim status = item.SubItems(1).Text
-                                   Dim key = item.SubItems(2).Text & "|" & item.SubItems(3).Text
+                                   Dim key = GetShaderKey(shader)
 
                                    If replacementMap.ContainsKey(key) Then
                                        Dim sourceShader = replacementMap(key)
@@ -559,6 +593,16 @@ Public Class Form1
 
         ToggleButtons(True)
         MessageBox.Show(Loc.GetString("MsgComplete"))
+    End Sub
+
+    Private Sub btnKeywords_Click(sender As Object, e As EventArgs) Handles btnKeywords.Click
+        Using frm As New KeywordSettingsForm(mosaicKeywords, Loc)
+            If frm.ShowDialog(Me) = DialogResult.OK Then
+                mosaicKeywords = frm.Keywords
+                KeywordSettings.Save(mosaicKeywords)
+                AutoSelectMosaicShaders()
+            End If
+        End Using
     End Sub
 
 End Class

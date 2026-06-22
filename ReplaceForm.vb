@@ -10,9 +10,11 @@ Public Class ReplaceForm
 
     Public SelectedShader As AssetProcessor.ShaderInfo
     Private allShaders As List(Of AssetProcessor.ShaderInfo)
+    Private targetShader As AssetProcessor.ShaderInfo
 
     Public Sub New(availableShaders As List(Of AssetProcessor.ShaderInfo), targetShader As AssetProcessor.ShaderInfo, loc As Localization)
         Me.allShaders = availableShaders
+        Me.targetShader = targetShader
 
         Me.Text = loc.GetString("SelectSourceShader")
         Me.Size = New Size(620, 450)
@@ -64,6 +66,7 @@ Public Class ReplaceForm
         lvShaders.Columns.Add(loc.GetString("ColName"), 200)
         lvShaders.Columns.Add(loc.GetString("ColPathID"), 60)
         lvShaders.Columns.Add(loc.GetString("ColFile"), 220)
+        ListViewColumnSorter.Attach(lvShaders)
         AddHandler lvShaders.DoubleClick, AddressOf btnOk_Click
         Me.Controls.Add(lvShaders)
 
@@ -75,17 +78,80 @@ Public Class ReplaceForm
 
     Private Sub PopulateList()
         lvShaders.Items.Clear()
+        Dim suggestedShader = FindSuggestedShader()
+        Dim suggestedItem As ListViewItem = Nothing
+
         For Each s In allShaders
             Dim lvi As New ListViewItem(s.Name)
             lvi.SubItems.Add(s.PathId.ToString())
             lvi.SubItems.Add(IO.Path.GetFileName(s.FilePath))
             lvi.Tag = s
+            If SameShader(s, suggestedShader) Then
+                lvi.BackColor = Color.PaleGreen
+                suggestedItem = lvi
+            End If
             lvShaders.Items.Add(lvi)
         Next
-        If lvShaders.Items.Count > 0 Then
+
+        If suggestedItem IsNot Nothing Then
+            suggestedItem.Selected = True
+            suggestedItem.Focused = True
+            suggestedItem.EnsureVisible()
+        ElseIf lvShaders.Items.Count > 0 Then
             lvShaders.Items(0).Selected = True
+            lvShaders.Items(0).Focused = True
         End If
     End Sub
+
+    Private Function FindSuggestedShader() As AssetProcessor.ShaderInfo
+        If targetShader Is Nothing OrElse String.IsNullOrWhiteSpace(targetShader.Name) Then Return Nothing
+
+        Dim targetName = targetShader.Name
+        Dim targetNormalized = targetName.ToLowerInvariant()
+        Dim bestMatch As AssetProcessor.ShaderInfo = Nothing
+        Dim bestLength = -1
+
+        For Each source In allShaders
+            If source Is Nothing OrElse String.IsNullOrWhiteSpace(source.Name) Then Continue For
+            If String.Equals(source.Name, targetName, StringComparison.OrdinalIgnoreCase) Then Continue For
+
+            Dim sourceNormalized = source.Name.ToLowerInvariant()
+            If IsSubsequence(sourceNormalized, targetNormalized) AndAlso sourceNormalized.Length > bestLength Then
+                bestLength = sourceNormalized.Length
+                bestMatch = source
+            End If
+        Next
+
+        If bestMatch Is Nothing Then Return Nothing
+
+        Dim lengthDiff = targetNormalized.Length - bestLength
+        If lengthDiff <= targetNormalized.Length * 0.5 Then
+            Return bestMatch
+        End If
+
+        Return Nothing
+    End Function
+
+    Private Function IsSubsequence(source As String, target As String) As Boolean
+        If String.IsNullOrEmpty(source) Then Return True
+        If String.IsNullOrEmpty(target) Then Return False
+
+        Dim sourceIndex = 0
+        For Each ch As Char In target
+            If source(sourceIndex) = ch Then
+                sourceIndex += 1
+                If sourceIndex = source.Length Then Return True
+            End If
+        Next
+
+        Return False
+    End Function
+
+    Private Function SameShader(left As AssetProcessor.ShaderInfo, right As AssetProcessor.ShaderInfo) As Boolean
+        If left Is Nothing OrElse right Is Nothing Then Return False
+        Return left.PathId = right.PathId AndAlso
+            String.Equals(left.FilePath, right.FilePath, StringComparison.OrdinalIgnoreCase)
+    End Function
 
     Private Sub btnOk_Click(sender As Object, e As EventArgs)
         If lvShaders.SelectedItems.Count > 0 Then
