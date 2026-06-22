@@ -10,6 +10,7 @@ Public Class AssetProcessor
     Public Event ProgressUpdate(value As Integer, max As Integer)
 
     Private ReadOnly ASSET_EXTENSIONS As String() = {".assets", ".bundle", ".unity3d", ".sharedassets", ".ress", ".dat"}
+    Private ReadOnly ClassDataPath As String = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "classdata.tpk")
 
     Public Class ShaderInfo
         Public Property Name As String
@@ -47,6 +48,213 @@ Public Class AssetProcessor
         If IsBackupFile(filePath) Then Return False
         If IsApkFile(filePath) Then Return False
         Return True
+    End Function
+
+    Private Function CollectLooseScanTargets(targetPath As String) As List(Of String)
+        Dim scanTargets As New List(Of String)()
+
+        If Directory.Exists(targetPath) Then
+            scanTargets.AddRange(Directory.GetFiles(targetPath, "*", SearchOption.AllDirectories).Where(
+                Function(f) IsScanAllCandidate(f)))
+        ElseIf File.Exists(targetPath) AndAlso IsScanAllCandidate(targetPath) Then
+            scanTargets.Add(targetPath)
+        End If
+
+        Return scanTargets
+    End Function
+
+    Private Function GetAssetName(am As AssetsManager, inst As AssetsFileInstance, info As AssetFileInfo) As String
+        Try
+            Dim baseField = am.GetBaseField(inst, info)
+            If baseField Is Nothing OrElse baseField.IsDummy() Then Return ""
+            Dim nameField = baseField.Get("m_Name")
+            If Not nameField.IsDummy() Then Return nameField.AsString
+        Catch
+        End Try
+
+        Return ""
+    End Function
+
+    Private Function LooksLikeMosaicName(assetName As String, configuredKeywords As IEnumerable(Of String)) As Boolean
+        If String.IsNullOrWhiteSpace(assetName) Then Return False
+
+        Dim lowered = assetName.ToLowerInvariant()
+        Dim keywords As New List(Of String) From {
+            "mosaic",
+            "censor",
+            "pixel",
+            "pixellate",
+            "pixelate",
+            "blur",
+            "モザイク",
+            "ピクセル",
+            "ぼかし"
+        }
+
+        If configuredKeywords IsNot Nothing Then
+            keywords.AddRange(configuredKeywords)
+        End If
+
+        Return keywords.
+            Where(Function(keyword) Not String.IsNullOrWhiteSpace(keyword)).
+            Distinct(StringComparer.OrdinalIgnoreCase).
+            Any(Function(keyword) lowered.Contains(keyword.ToLowerInvariant()))
+    End Function
+
+    Public Function FindRestorableBackups(targetPath As String) As List(Of String)
+        Dim backups As New List(Of String)()
+
+        Try
+            If Directory.Exists(targetPath) Then
+                backups.AddRange(Directory.GetFiles(targetPath, "*.bak", SearchOption.AllDirectories))
+            ElseIf File.Exists(targetPath) Then
+                If IsBackupFile(targetPath) Then
+                    backups.Add(targetPath)
+                ElseIf File.Exists(targetPath & ".bak") Then
+                    backups.Add(targetPath & ".bak")
+                End If
+            End If
+        Catch ex As Exception
+            Log(String.Format(Loc.GetString("LogError"), "Backup search failed: " & ex.Message))
+        End Try
+
+        Return backups.
+            Where(Function(path) path.EndsWith(".bak", StringComparison.OrdinalIgnoreCase)).
+            Distinct(StringComparer.OrdinalIgnoreCase).
+            OrderBy(Function(path) path, StringComparer.OrdinalIgnoreCase).
+            ToList()
+    End Function
+
+    Public Function RestoreBackups(targetPath As String) As Integer
+        Dim restored = 0
+        For Each backupPath In FindRestorableBackups(targetPath)
+            Dim originalPath = backupPath.Substring(0, backupPath.Length - 4)
+            Try
+                File.Copy(backupPath, originalPath, True)
+                restored += 1
+                Log(String.Format(Loc.GetString("LogRestored"), Path.GetFileName(originalPath)))
+            Catch ex As Exception
+                Log(String.Format(Loc.GetString("LogError"), "Restore failed: " & Path.GetFileName(backupPath) & " - " & ex.Message))
+            End Try
+        Next
+
+        Return restored
+    End Function
+
+    Public Function DiagnoseNonShaderMosaicAssets(targetPath As String, Optional configuredKeywords As IEnumerable(Of String) = Nothing) As Integer
+        Dim scanTargets = CollectLooseScanTargets(targetPath)
+        Dim totalFindings = 0
+        Dim maxLoggedFindings = 80
+
+        Log(String.Format(Loc.GetString("LogDiagnosticsStart"), scanTargets.Count))
+
+        Dim am As New AssetsManager()
+        If File.Exists(ClassDataPath) Then
+            Try
+                am.LoadClassPackage(ClassDataPath)
+            Catch
+            End Try
+        End If
+
+        Dim targetTypes = New List(Of Tuple(Of AssetClassID, String)) From {
+            Tuple.Create(AssetClassID.Texture2D, "Texture2D"),
+            Tuple.Create(AssetClassID.Sprite, "Sprite"),
+            Tuple.Create(AssetClassID.Material, "Material")
+        }
+
+        For Each filePath In scanTargets
+            Try
+                Dim isBundle = False
+                Using fs As FileStream = File.OpenRead(filePath)
+                    If fs.Length > 20 Then
+                        Using br As New BinaryReader(fs)
+                            Dim magic As String = New String(br.ReadChars(7))
+                            If magic.StartsWith("UnityFS") OrElse magic.StartsWith("UnityWeb") OrElse magic.StartsWith("UnityRaw") Then
+                                isBundle = True
+                            End If
+                        End Using
+                    End If
+                End Using
+
+                Dim bunInst As BundleFileInstance = Nothing
+                Dim assetInsts As New List(Of AssetsFileInstance)()
+
+                If isBundle Then
+                    bunInst = am.LoadBundleFile(filePath, False)
+                    For j As Integer = 0 To bunInst.file.BlockAndDirInfo.DirectoryInfos.Count - 1
+                        Dim dirInfo = bunInst.file.BlockAndDirInfo.DirectoryInfos(j)
+                        If dirInfo.Name.EndsWith(".resS") OrElse dirInfo.Name.EndsWith(".resource") Then Continue For
+                        Try
+                            Dim assetInst = am.LoadAssetsFileFromBundle(bunInst, j, False)
+                            If assetInst IsNot Nothing Then assetInsts.Add(assetInst)
+                        Catch
+                        End Try
+                    Next
+                Else
+                    Dim assetInst = am.LoadAssetsFile(filePath, False)
+                    If assetInst IsNot Nothing Then assetInsts.Add(assetInst)
+                End If
+
+                For Each inst In assetInsts
+                    If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
+                        Try
+                            am.LoadClassDatabaseFromPackage(inst.file.Metadata.UnityVersion)
+                        Catch
+                        End Try
+                    End If
+
+                    For Each targetType In targetTypes
+                        For Each info In inst.file.GetAssetsOfType(targetType.Item1)
+                            Dim assetName = GetAssetName(am, inst, info)
+                            If LooksLikeMosaicName(assetName, configuredKeywords) Then
+                                totalFindings += 1
+                                If totalFindings <= maxLoggedFindings Then
+                                    Log(String.Format(Loc.GetString("LogDiagnosticFinding"), targetType.Item2, assetName, info.PathId, Path.GetFileName(filePath)))
+                                End If
+                            End If
+                        Next
+                    Next
+
+                    Try
+                        inst.file.Close()
+                    Catch
+                    End Try
+                Next
+
+                If isBundle AndAlso bunInst IsNot Nothing Then
+                    Try
+                        bunInst.file.Close()
+                    Catch
+                    End Try
+                End If
+            Catch
+            Finally
+                Try
+                    am.UnloadAllAssetsFiles(True)
+                Catch
+                End Try
+                Try
+                    am.UnloadAllBundleFiles()
+                Catch
+                End Try
+            End Try
+        Next
+
+        If totalFindings = 0 Then
+            Log(Loc.GetString("LogDiagnosticsNone"))
+        Else
+            If totalFindings > maxLoggedFindings Then
+                Log(String.Format(Loc.GetString("LogDiagnosticsMore"), totalFindings - maxLoggedFindings))
+            End If
+            Log(String.Format(Loc.GetString("LogDiagnosticsSummary"), totalFindings))
+        End If
+
+        Try
+            am.UnloadAll()
+        Catch
+        End Try
+
+        Return totalFindings
     End Function
 
     Public Function ScanShaders(targetPath As String, scanAll As Boolean, ByRef outApkMap As Dictionary(Of String, String)) As List(Of ShaderInfo)
@@ -125,9 +333,9 @@ Public Class AssetProcessor
         Log(String.Format(Loc.GetString("LogScanStart"), totalFiles))
 
         Dim am As New AssetsManager()
-        If File.Exists("classdata.tpk") Then
+        If File.Exists(ClassDataPath) Then
             Try
-                am.LoadClassPackage("classdata.tpk")
+                am.LoadClassPackage(ClassDataPath)
             Catch
             End Try
         End If
@@ -191,7 +399,7 @@ Public Class AssetProcessor
             End If
 
             For Each inst In assetInsts
-                If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists("classdata.tpk") Then
+                If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
                     Try
                         am.LoadClassDatabaseFromPackage(inst.file.Metadata.UnityVersion)
                     Catch
@@ -250,9 +458,9 @@ Public Class AssetProcessor
     Public Sub ProcessAssets(shadersToProcess As Dictionary(Of String, HashSet(Of Long)), backup As Boolean)
         Dim i As Integer = 0
         Dim am As New AssetsManager()
-        If File.Exists("classdata.tpk") Then
+        If File.Exists(ClassDataPath) Then
             Try
-                am.LoadClassPackage("classdata.tpk")
+                am.LoadClassPackage(ClassDataPath)
             Catch
             End Try
         End If
@@ -313,7 +521,7 @@ Public Class AssetProcessor
 
                 For Each kvp In assetInsts
                     Dim inst = kvp.Value
-                    If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists("classdata.tpk") Then
+                    If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
                         Try
                             am.LoadClassDatabaseFromPackage(inst.file.Metadata.UnityVersion)
                         Catch
@@ -646,16 +854,16 @@ Public Class AssetProcessor
         Log(String.Format(Loc.GetString("LogReplacing"), Path.GetFileName(targetInfo.FilePath)))
 
         Dim am As New AssetsManager()
-        If File.Exists("classdata.tpk") Then
+        If File.Exists(ClassDataPath) Then
             Try
-                am.LoadClassPackage("classdata.tpk")
+                am.LoadClassPackage(ClassDataPath)
             Catch
             End Try
         End If
         
         Try
             Dim sourceInst = am.LoadAssetsFile(sourceInfo.FilePath, False)
-            If am.ClassDatabase Is Nothing AndAlso sourceInst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists("classdata.tpk") Then
+            If am.ClassDatabase Is Nothing AndAlso sourceInst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
                 am.LoadClassDatabaseFromPackage(sourceInst.file.Metadata.UnityVersion)
             End If
             Dim sourceAssetInfo = sourceInst.file.GetAssetInfo(sourceInfo.PathId)
@@ -667,7 +875,7 @@ Public Class AssetProcessor
             Dim sourceBaseField = am.GetBaseField(sourceInst, sourceAssetInfo)
             
             Dim targetInst = am.LoadAssetsFile(targetInfo.FilePath, False)
-            If am.ClassDatabase Is Nothing AndAlso targetInst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists("classdata.tpk") Then
+            If am.ClassDatabase Is Nothing AndAlso targetInst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
                 am.LoadClassDatabaseFromPackage(targetInst.file.Metadata.UnityVersion)
             End If
             If RequiresRawPatchWriter(targetInst) Then
@@ -772,9 +980,9 @@ Public Class AssetProcessor
     Private Function ValidateAssetFile(filePath As String) As Boolean
         Dim am As New AssetsManager()
         Try
-            If File.Exists("classdata.tpk") Then
+            If File.Exists(ClassDataPath) Then
                 Try
-                    am.LoadClassPackage("classdata.tpk")
+                    am.LoadClassPackage(ClassDataPath)
                 Catch
                 End Try
             End If
@@ -811,7 +1019,7 @@ Public Class AssetProcessor
             If assetInsts.Count = 0 Then Return False
 
             For Each inst In assetInsts
-                If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists("classdata.tpk") Then
+                If am.ClassDatabase Is Nothing AndAlso inst.file.Metadata.TypeTreeEnabled = False AndAlso File.Exists(ClassDataPath) Then
                     Try
                         am.LoadClassDatabaseFromPackage(inst.file.Metadata.UnityVersion)
                     Catch

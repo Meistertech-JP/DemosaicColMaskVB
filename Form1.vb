@@ -13,6 +13,8 @@ Public Class Form1
     Private WithEvents chkBackup As CheckBox
     Private WithEvents btnStart As Button
     Private WithEvents btnKeywords As Button
+    Private WithEvents btnDiagnose As Button
+    Private WithEvents btnRestoreBackup As Button
     Private WithEvents txtFilter As TextBox
     Private WithEvents lvAvailable As ListView
     Private WithEvents lvSelected As ListView
@@ -38,7 +40,7 @@ Public Class Form1
     End Sub
 
     Private Sub SetupUI()
-        Me.Size = New Drawing.Size(920, 600)
+        Me.Size = New Drawing.Size(1060, 620)
 
         ' Top Panel
         Dim pnlTop As New Panel() With {.Dock = DockStyle.Top, .Height = 40}
@@ -47,25 +49,31 @@ Public Class Form1
         Dim lblPath As New Label() With {.Name = "lblPath", .Left = 10, .Top = 12, .Width = 40}
         pnlTop.Controls.Add(lblPath)
 
-        txtPath = New TextBox() With {.Left = 50, .Top = 10, .Width = 260, .AllowDrop = True}
+        txtPath = New TextBox() With {.Left = 50, .Top = 10, .Width = 285, .AllowDrop = True}
         pnlTop.Controls.Add(txtPath)
 
         scanDebounceTimer = New Timer() With {.Interval = 700}
         AddHandler scanDebounceTimer.Tick, AddressOf scanDebounceTimer_Tick
 
-        btnScanAll = New Button() With {.Left = 320, .Top = 8, .Width = 80}
+        btnScanAll = New Button() With {.Left = 345, .Top = 8, .Width = 80}
         pnlTop.Controls.Add(btnScanAll)
 
-        chkBackup = New CheckBox() With {.Left = 410, .Top = 12, .Width = 90, .Checked = True}
+        chkBackup = New CheckBox() With {.Left = 435, .Top = 12, .Width = 90, .Checked = True}
         pnlTop.Controls.Add(chkBackup)
 
-        btnStart = New Button() With {.Left = 510, .Top = 8, .Width = 110}
+        btnStart = New Button() With {.Left = 535, .Top = 8, .Width = 115}
         pnlTop.Controls.Add(btnStart)
 
-        btnKeywords = New Button() With {.Left = 630, .Top = 8, .Width = 85}
+        btnKeywords = New Button() With {.Left = 660, .Top = 8, .Width = 80}
         pnlTop.Controls.Add(btnKeywords)
 
-        cmbLang = New ComboBox() With {.Left = 725, .Top = 9, .Width = 120, .DropDownStyle = ComboBoxStyle.DropDownList}
+        btnDiagnose = New Button() With {.Left = 750, .Top = 8, .Width = 80}
+        pnlTop.Controls.Add(btnDiagnose)
+
+        btnRestoreBackup = New Button() With {.Left = 840, .Top = 8, .Width = 75}
+        pnlTop.Controls.Add(btnRestoreBackup)
+
+        cmbLang = New ComboBox() With {.Left = 925, .Top = 9, .Width = 120, .DropDownStyle = ComboBoxStyle.DropDownList}
         cmbLang.Items.Add(New With {.Text = "English", .Value = "en"})
         cmbLang.Items.Add(New With {.Text = "日本語", .Value = "ja"})
         cmbLang.Items.Add(New With {.Text = "繁體中文", .Value = "zh-Hant"})
@@ -161,7 +169,7 @@ Public Class Form1
     End Sub
 
     Private Sub ApplyLanguage()
-        Me.Text = Loc.GetString("Title")
+        Me.Text = Loc.GetString("Title") & " " & GetVersionText()
         
         Dim pnlTop = Me.Controls.OfType(Of Panel)().FirstOrDefault(Function(p) p.Dock = DockStyle.Top)
         If pnlTop IsNot Nothing Then
@@ -173,6 +181,8 @@ Public Class Form1
         chkBackup.Text = Loc.GetString("BackupFile")
         btnStart.Text = Loc.GetString("StartDemosaic")
         btnKeywords.Text = Loc.GetString("Keywords")
+        btnDiagnose.Text = Loc.GetString("Diagnose")
+        btnRestoreBackup.Text = Loc.GetString("RestoreBackup")
 
         ' Find split panels
         Dim splitMain = Me.Controls.OfType(Of SplitContainer)().FirstOrDefault()
@@ -330,12 +340,13 @@ Public Class Form1
 
         Dim apkModeDetected As Boolean = False
 
-        If Not File.Exists("classdata.tpk") Then
+        Dim classDataPath = IO.Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "classdata.tpk")
+        If Not File.Exists(classDataPath) Then
             Try
                 Dim assembly = System.Reflection.Assembly.GetExecutingAssembly()
                 Using stream = assembly.GetManifestResourceStream("DemosaicColMaskVB.classdata.tpk")
                     If stream IsNot Nothing Then
-                        Using fileStream = File.Create("classdata.tpk")
+                        Using fileStream = File.Create(classDataPath)
                             stream.CopyTo(fileStream)
                         End Using
                         txtLog.AppendText("Extracted built-in classdata.tpk." & vbCrLf)
@@ -367,7 +378,24 @@ Public Class Form1
         btnScanAll.Enabled = enabled
         btnStart.Enabled = enabled
         btnKeywords.Enabled = enabled
+        btnDiagnose.Enabled = enabled
+        btnRestoreBackup.Enabled = enabled
     End Sub
+
+    Private Function GetVersionText() As String
+        Try
+            Dim asm = System.Reflection.Assembly.GetExecutingAssembly()
+            Dim attr = asm.GetCustomAttributes(GetType(System.Reflection.AssemblyInformationalVersionAttribute), False).
+                OfType(Of System.Reflection.AssemblyInformationalVersionAttribute)().
+                FirstOrDefault()
+            If attr IsNot Nothing AndAlso Not String.IsNullOrWhiteSpace(attr.InformationalVersion) Then
+                Return "v" & attr.InformationalVersion.Split("+"c)(0)
+            End If
+        Catch
+        End Try
+
+        Return ""
+    End Function
 
     Private Function GetShaderKey(shader As AssetProcessor.ShaderInfo) As String
         If shader Is Nothing Then Return ""
@@ -399,7 +427,7 @@ Public Class Form1
             If String.IsNullOrEmpty(filter) OrElse shader.Name.ToLower().Contains(filter) OrElse shader.FilePath.ToLower().Contains(filter) Then
                 Dim lvi As New ListViewItem(shader.Name)
                 lvi.SubItems.Add(shader.PathId.ToString())
-                lvi.SubItems.Add(Path.GetFileName(shader.FilePath))
+                lvi.SubItems.Add(IO.Path.GetFileName(shader.FilePath))
                 lvi.Tag = shader
                 If IsPotentialMosaicShader(shader.Name) Then
                     lvi.BackColor = Drawing.Color.FromArgb(255, 238, 218)
@@ -500,12 +528,80 @@ Public Class Form1
         If lvSelected.SelectedItems.Count = 0 Then Return
         Dim selectedItem = lvSelected.SelectedItems(0)
         Dim shader = CType(selectedItem.Tag, AssetProcessor.ShaderInfo)
-        Dim info = $"Name: {shader.Name}{vbCrLf}PathID: {shader.PathId}{vbCrLf}File: {Path.GetFileName(shader.FilePath)}{vbCrLf}Full Path: {shader.FilePath}"
+        Dim info = $"Name: {shader.Name}{vbCrLf}PathID: {shader.PathId}{vbCrLf}File: {IO.Path.GetFileName(shader.FilePath)}{vbCrLf}Full Path: {shader.FilePath}"
         Try
             Clipboard.SetText(info)
         Catch
         End Try
     End Sub
+
+    Private Function BuildDryRunSummary(selectedItems As List(Of ListViewItem), backup As Boolean) As String
+        Dim targetFiles As New HashSet(Of String)(StringComparer.OrdinalIgnoreCase)
+        Dim colMaskCount = 0
+        Dim replacementCount = 0
+        Dim rawPatchFileCount = 0
+        Dim structuredSaveFileCount = 0
+        Dim lines As New List(Of String)()
+
+        For Each item In selectedItems
+            Dim shader = CType(item.Tag, AssetProcessor.ShaderInfo)
+            Dim key = GetShaderKey(shader)
+            targetFiles.Add(shader.FilePath)
+            If replacementMap.ContainsKey(key) Then
+                replacementCount += 1
+            Else
+                colMaskCount += 1
+            End If
+        Next
+
+        Dim orderedTargetFiles = targetFiles.OrderBy(Function(p) p, StringComparer.OrdinalIgnoreCase).ToList()
+
+        For Each filePath In orderedTargetFiles
+            If IsLikelyBundle(filePath) Then
+                structuredSaveFileCount += 1
+            Else
+                rawPatchFileCount += 1
+            End If
+        Next
+
+        lines.Add(String.Format(Loc.GetString("DryRunHeader"), selectedItems.Count, targetFiles.Count))
+        lines.Add(String.Format(Loc.GetString("DryRunOperations"), colMaskCount, replacementCount))
+        lines.Add(String.Format(Loc.GetString("DryRunWriters"), rawPatchFileCount, structuredSaveFileCount))
+        lines.Add(String.Format(Loc.GetString("DryRunBackup"), If(backup, Loc.GetString("On"), Loc.GetString("Off"))))
+        lines.Add("")
+        lines.Add(Loc.GetString("DryRunTargets"))
+
+        For Each filePath In orderedTargetFiles.Take(12)
+            Dim pathIds = selectedItems.
+                Select(Function(item) CType(item.Tag, AssetProcessor.ShaderInfo)).
+                Where(Function(shader) String.Equals(shader.FilePath, filePath, StringComparison.OrdinalIgnoreCase)).
+                Select(Function(shader) shader.PathId.ToString()).
+                ToArray()
+            lines.Add("  - " & IO.Path.GetFileName(filePath) & " : " & String.Join(", ", pathIds))
+        Next
+
+        If targetFiles.Count > 12 Then
+            lines.Add("  ... +" & (targetFiles.Count - 12).ToString() & " files")
+        End If
+
+        lines.Add("")
+        lines.Add(Loc.GetString("DryRunContinue"))
+        Return String.Join(vbCrLf, lines)
+    End Function
+
+    Private Function IsLikelyBundle(filePath As String) As Boolean
+        Try
+            Using fs As FileStream = File.OpenRead(filePath)
+                If fs.Length <= 20 Then Return False
+                Using br As New BinaryReader(fs)
+                    Dim magic As String = New String(br.ReadChars(7))
+                    Return magic.StartsWith("UnityFS") OrElse magic.StartsWith("UnityWeb") OrElse magic.StartsWith("UnityRaw")
+                End Using
+            End Using
+        Catch
+            Return False
+        End Try
+    End Function
 
     Private Async Sub btnStart_Click(sender As Object, e As EventArgs) Handles btnStart.Click
         If lvSelected.Items.Count = 0 Then
@@ -542,6 +638,12 @@ Public Class Form1
         For Each item As ListViewItem In lvSelected.Items
             selectedItems.Add(item)
         Next
+
+        Dim preview = BuildDryRunSummary(selectedItems, backup)
+        If MessageBox.Show(preview, Loc.GetString("DryRunTitle"), MessageBoxButtons.OKCancel, MessageBoxIcon.Information) <> DialogResult.OK Then
+            ToggleButtons(True)
+            Return
+        End If
 
         Await Task.Run(Sub()
                            Try
@@ -593,6 +695,52 @@ Public Class Form1
 
         ToggleButtons(True)
         MessageBox.Show(Loc.GetString("MsgComplete"))
+    End Sub
+
+    Private Async Sub btnDiagnose_Click(sender As Object, e As EventArgs) Handles btnDiagnose.Click
+        Dim path = txtPath.Text.Trim()
+        If String.IsNullOrWhiteSpace(path) Then
+            MessageBox.Show(Loc.GetString("MsgSelectPath"))
+            Return
+        End If
+
+        ToggleButtons(False)
+        Await Task.Run(Sub()
+                           processor.DiagnoseNonShaderMosaicAssets(path, mosaicKeywords)
+                       End Sub)
+        ToggleButtons(True)
+    End Sub
+
+    Private Async Sub btnRestoreBackup_Click(sender As Object, e As EventArgs) Handles btnRestoreBackup.Click
+        Dim path = txtPath.Text.Trim()
+        If String.IsNullOrWhiteSpace(path) Then
+            MessageBox.Show(Loc.GetString("MsgSelectPath"))
+            Return
+        End If
+
+        Dim backups = processor.FindRestorableBackups(path)
+        If backups.Count = 0 Then
+            MessageBox.Show(Loc.GetString("MsgNoBackups"), Loc.GetString("RestoreBackup"), MessageBoxButtons.OK, MessageBoxIcon.Information)
+            Return
+        End If
+
+        Dim previewLines = backups.Take(12).Select(Function(p) "  - " & IO.Path.GetFileName(p)).ToList()
+        If backups.Count > 12 Then
+            previewLines.Add("  ... +" & (backups.Count - 12).ToString() & " files")
+        End If
+
+        Dim message = String.Format(Loc.GetString("RestoreConfirm"), backups.Count) & vbCrLf & vbCrLf & String.Join(vbCrLf, previewLines)
+        If MessageBox.Show(message, Loc.GetString("RestoreBackup"), MessageBoxButtons.YesNo, MessageBoxIcon.Warning) <> DialogResult.Yes Then
+            Return
+        End If
+
+        ToggleButtons(False)
+        Dim restored = 0
+        Await Task.Run(Sub()
+                           restored = processor.RestoreBackups(path)
+                       End Sub)
+        ToggleButtons(True)
+        MessageBox.Show(String.Format(Loc.GetString("MsgRestoreComplete"), restored), Loc.GetString("RestoreBackup"), MessageBoxButtons.OK, MessageBoxIcon.Information)
     End Sub
 
     Private Sub btnKeywords_Click(sender As Object, e As EventArgs) Handles btnKeywords.Click

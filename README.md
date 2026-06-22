@@ -11,10 +11,14 @@ This is not a GitHub fork in the strict repository sense. The original project i
 ## Highlights
 
 - WinForms GUI for scanning Unity asset folders or files.
-- Automatic selection for common mosaic shader names such as `mos`, `moz`, `masi`, `maz`, `censor`, `ピクセル`, and `モザイク`.
+- Version is shown in the title bar so screenshots and reports identify the exact build.
+- Automatic selection for configurable mosaic shader name keywords such as `mos`, `moz`, `masi`, `maz`, `censor`, `ピクセル`, and `モザイク`.
 - `pixel` matches are highlighted in light orange for manual review instead of being auto-selected.
+- Sortable shader lists and source-replacement suggestions.
+- Dry-run confirmation before writing, showing target files, path IDs, backup mode, and planned writer type.
 - Raw byte patching is preferred for loose `.assets` files across Unity versions, preserving original file length, object layout, metadata, padding, and unknown bytes whenever the `colMask` change is safe.
-- Backup support with `.bak` files.
+- Backup support with `.bak` files, plus a restore button for reverting backed-up files.
+- Diagnostics for Texture2D, Sprite, and Material names that look like baked or 2D mosaics.
 - Multilingual UI: English, Japanese, Traditional Chinese, Simplified Chinese, and Korean.
 - APK repack/sign flow exists, but loose `.assets` files are the primary tested path.
 
@@ -49,22 +53,41 @@ The debug executable is generated under:
 bin\Debug\net8.0-windows\DemosaicColMaskVB.exe
 ```
 
+Release packages can be built locally:
+
+```powershell
+dotnet publish -c Release -o .\artifacts\framework-dependent
+dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=false -o .\artifacts\self-contained
+```
+
+GitHub Actions also builds both package types on `main` pushes and creates release assets for `v*` tags.
+
+## Packages
+
+- `windows-framework-dependent.zip`: smaller; requires the .NET 8 Windows Desktop Runtime.
+- `windows-x64-self-contained.zip`: larger; includes the .NET runtime for Windows x64.
+
 ## Usage
 
 1. Launch `DemosaicColMaskVB.exe`.
 2. Drag and drop a Unity asset folder or double-click the path field to select one.
 3. Review the detected Shader list.
-4. Move only the shaders you want to process into the selected list.
-5. Click **Start Demosaic**.
-6. Keep the `.bak` files until you have confirmed that the game starts and renders correctly.
+4. Use **Keywords** if you want to adjust auto-selection names.
+5. Optionally click **Diagnose** to search for Texture2D, Sprite, or Material names that may indicate baked/2D mosaics.
+6. Move only the shaders you want to process into the selected list.
+7. Click **Start Demosaic**, review the dry-run confirmation, then continue only if the target files and PathIDs are correct.
+8. Keep the `.bak` files until you have confirmed that the game starts and renders correctly.
+9. Use **Restore** if you need to copy `.bak` files back over their original files.
 
 ## Safety Notes
 
 - Always test on a copy or keep backups.
+- Read the dry-run confirmation before writing; it is the last in-app checkpoint before files are modified.
 - Raw patch is used for loose `.assets` files when possible.
 - Bundle and APK paths are more fragile because repacking can change compression, signing, or container layout.
 - Shader replacement is riskier than `colMask` editing because replacement can require size or structure changes.
 - 2D games or image-baked mosaics may not change visually. This tool only edits Shader `colMask` values; it cannot remove censorship already baked into textures, sprites, or image assets.
+- Restore overwrites originals from `.bak` files but does not delete the `.bak` files.
 - This tool is for local research and compatibility testing. Use it responsibly and respect applicable laws and content rules.
 
 ## Credits

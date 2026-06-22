@@ -1,0 +1,72 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Restore
+        run: |
+          dotnet restore
+          dotnet restore -r win-x64
+
+      - name: Build
+        run: dotnet build --no-restore -c Release
+
+      - name: Publish packages
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          $versionLabel = '${{ github.ref_name }}'
+          if (-not $versionLabel.StartsWith('v')) {
+            $sha = '${{ github.sha }}'
+            $versionLabel = 'dev-' + $sha.Substring(0, 8)
+          }
+
+          $artifactRoot = Join-Path $PWD 'artifacts'
+          $fdDir = Join-Path $artifactRoot 'framework-dependent'
+          $scDir = Join-Path $artifactRoot 'self-contained'
+          $zipDir = Join-Path $artifactRoot 'zips'
+          New-Item -ItemType Directory -Force -Path $fdDir, $scDir, $zipDir | Out-Null
+
+          dotnet publish --no-restore -c Release -o $fdDir
+          Copy-Item -LiteralPath README.md, README.ja.md -Destination $fdDir
+          Compress-Archive -Path (Join-Path $fdDir '*') -DestinationPath (Join-Path $zipDir "DemosaicColMaskVB-$versionLabel-windows-framework-dependent.zip") -Force
+
+          dotnet publish --no-restore -c Release -r win-x64 --self-contained true -p:PublishSingleFile=false -p:PublishTrimmed=false -o $scDir
+          Copy-Item -LiteralPath README.md, README.ja.md -Destination $scDir
+          Compress-Archive -Path (Join-Path $scDir '*') -DestinationPath (Join-Path $zipDir "DemosaicColMaskVB-$versionLabel-windows-x64-self-contained.zip") -Force
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: DemosaicColMaskVB-packages
+          path: artifacts/zips/*.zip
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ github.ref_name }}' artifacts/zips/*.zip --title "DemosaicColMaskVB ${{ github.ref_name }}" --generate-notes
